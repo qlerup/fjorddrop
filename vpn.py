@@ -147,7 +147,9 @@ class VPN:
             # Dedicated block, never the gateway/torrent or game forwarding ports.
             port = 60000 + int(self.owner[:4],16)%100 * 33
             labels = {OWNER:self.owner, 'dk.fjorddrop.vpn-container':vpn.id,
-                      'dk.fjorddrop.vpn-port':str(port), 'dk.fjorddrop.vpn-ip':host}
+                      'dk.fjorddrop.vpn-port':str(port), 'dk.fjorddrop.vpn-ip':host,
+                      'dk.fjordvpn.profile':profile,
+                      'dk.fjorddrop.vpn-project':vpn.labels.get('com.docker.compose.project','')}
             project = parent.labels.get('com.docker.compose.project')
             if not project:
                 raise ValueError('FjordVPN kræver installation med Docker Compose.')
@@ -188,7 +190,7 @@ class VPN:
                 self.status.update(ready=False, message=str(exc) if isinstance(exc, ValueError)
                     else 'FjordVPN kan ikke kontaktes. Kontrollér Docker-adgang og at FjordVPN kører.')
             if self.profile and not self.config:
-                await self.drop.close_transfers()
+                await self.drop.close_transfers('vpn')
 
     async def run(self):
         while True:

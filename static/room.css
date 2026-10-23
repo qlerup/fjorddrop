@@ -3,3 +3,4 @@
 #room-vpn-banner[data-state=ready]{background:#142c28;border-color:#397a68;color:#a0efd3}
 #room-vpn-banner[data-state=error]{background:#342024;border-color:#9e5362;color:#ffd2da}
 #room-vpn-status[data-state=ready]{color:#a0efd3;font-weight:600}
+body.room-connected .room-hero,body.room-connected #room-vpn,body.room-connected #room-vpn-banner{display:none}

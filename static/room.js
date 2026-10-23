@@ -38,28 +38,29 @@ async function call(action,body={}){
   const r=await fetch(`/api/guest/${s.node}/${s.id}/${action}`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+s.token},body:JSON.stringify(body)});
   const data=await r.json();if(!r.ok)throw new Error(data.error||'Forbindelsen er afsluttet.');return data;
 }
-function end(reason){
-  if(session)call('room_close').catch(()=>{});
+function end(reason,code='left'){
+  if(session)call('room_close',{reason:code}).catch(()=>{});
+  document.body.classList.remove('room-connected');
   clearInterval(pollTimer);pollTimer=null;const pc=roomPeer;roomPeer=null;session=null;pc?.close();
   el('room-start').hidden=false;el('room-session').hidden=true;el('room-file-input').value='';showLocal(new Map());showRemote([]);if(reason)message(reason);
 }
 function start(info,role){
   el('room-start').hidden=true;el('room-session').hidden=false;el('room-files').hidden=true;el('room-invite').hidden=role!=='host';el('room-transfer').hidden=true;el('room-state').textContent=role==='host'?'Venter på den anden …':'Forbinder krypteret …';
   roomPeer=new RoomPeer(info.ice,info.force_relay,{
-    open(){el('room-state').textContent=info.force_relay?'Forbundet · krypteret gennem FjordVPN':'Forbundet · krypteret WebRTC';el('room-invite').hidden=true;el('room-files').hidden=false;},
-    local:showLocal,remote:showRemote,error:message,closed:reason=>{if(session)end(reason||'Forbindelsen er afsluttet.');},
+    open(){document.body.classList.add('room-connected');el('room-state').textContent=info.force_relay?'Forbundet · krypteret gennem FjordVPN':'Forbundet · krypteret WebRTC';el('room-invite').hidden=true;el('room-files').hidden=false;},
+    local:showLocal,remote:showRemote,error:message,closed:reason=>{if(session)end(reason||'Forbindelsen er afsluttet.','connection_failed');},
     progress(direction,name,done,total){el('room-transfer').hidden=false;el('room-transfer-label').textContent=direction+': '+name;el('room-progress').value=total?done/total*100:100;el('room-transfer-detail').textContent=size(done)+' / '+size(total);}
   });
   session.role=role;session.ack=0;session.offered=false;session.started=Date.now();
   message('');
-  pollTimer=setInterval(()=>poll().catch(e=>end(e.message)),1000);poll().catch(e=>end(e.message));
+  pollTimer=setInterval(()=>poll().catch(e=>end(e.message,'connection_failed')),1000);poll().catch(e=>end(e.message,'connection_failed'));
 }
 async function poll(){
   if(pollBusy||!session)return;pollBusy=true;const current=session;
   try{
     const reply=await call('room_poll',{ack:current.ack});if(session!==current)return;
     for(const item of reply.messages){if(item.id<=current.ack)continue;await roomPeer.pc.setRemoteDescription(item.signal);current.ack=item.id;if(item.signal.type==='offer'){const signal=await roomPeer.description('answer');await call('room_poll',{ack:current.ack,signal});}}
-    if(reply.joined&&!current.negotiatingAt)current.negotiatingAt=Date.now();
+    if(reply.joined&&!current.negotiatingAt){current.negotiatingAt=Date.now();el('room-state').textContent='Den anden er med · opretter krypteret filforbindelse …';el('room-invite').hidden=true;}
     if(reply.joined&&current.role==='host'&&!current.offered){current.offered=true;const signal=await roomPeer.description('offer');await call('room_poll',{ack:current.ack,signal});}
     if(current.negotiatingAt&&roomPeer.pc.connectionState!=='connected'&&Date.now()-current.negotiatingAt>60000)throw new Error('Forbindelsen kunne ikke oprettes. Kontrollér VPN/TURN, og opret en ny kode.');
   }finally{pollBusy=false;}

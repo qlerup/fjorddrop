@@ -62,3 +62,18 @@ def test_modern_docker_network_inspect():
     assert bridge_network(c)['Gateway']=='172.17.0.1'
     c.attrs['NetworkSettings']['Networks']['bridge']['Gateway']=''
     with pytest.raises(ValueError):bridge_network(c)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('reason,expected', [('vpn','VPN-forbindelsen var ikke klar'), ('connection_failed','Den anden kunne ikke opretholde'), ('left','Den anden har forladt')])
+async def test_closed_room_explains_cause_to_participants_only(tmp_path,reason,expected):
+    drop=create_app(tmp_path/'data',tmp_path/'shared',tmp_path/'received')['drop']
+    drop.rooms.room={'id':'room','expires':time.time()+60,'people':{'host':{'token':'host-token','seen':time.time(),'queue':[]}}}
+    await drop.close_transfers(reason)
+    # A second cleanup must not replace the original failure with a generic one.
+    drop.rooms.close()
+    with pytest.raises(ValueError,match=expected):
+        await drop.rooms.action('room','host-token','room_poll',{})
+    with pytest.raises(ValueError,match='Forbindelsen er afsluttet'):
+        await drop.rooms.action('room','unknown','room_poll',{})
+    drop.store.db.close()

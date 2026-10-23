@@ -6,20 +6,34 @@ import time
 
 from aiohttp import web
 
+END_REASONS = {
+    'left': 'Den anden har forladt forbindelsen. Opret en ny kode.',
+    'connection_failed': 'Den anden kunne ikke opretholde filforbindelsen. Kontrollér VPN/TURN og netværksadgang på begge sider.',
+    'vpn': 'VPN-forbindelsen var ikke klar. Filforbindelsen blev lukket for at undgå overførsel uden VPN. Opret en ny kode, når VPN er klar.',
+    'inactive': 'En af browserne holdt op med at svare. Hold begge faner åbne, og opret en ny kode.',
+    'expired': 'Forbindelseskoden er udløbet. Opret en ny kode.',
+}
+
 
 class Rooms:
     def __init__(self, drop):
         self.drop = drop
         self.room = None
+        self.last_closed = None
 
     @property
     def active(self):
         r = self.room
-        if r and (time.time()>r['expires'] or any(time.time()-p['seen']>75 for p in r['people'].values())):
-            self.room = None
+        if r and time.time()>r['expires']:
+            self.close('expired')
+        elif r and any(time.time()-p['seen']>75 for p in r['people'].values()):
+            self.close('inactive')
         return self.room is not None
 
-    def close(self):
+    def close(self, reason='left'):
+        if self.room:
+            self.last_closed = {'id':self.room['id'], 'tokens':[p['token'] for p in self.room['people'].values()],
+                                'reason':END_REASONS.get(reason, END_REASONS['left']), 'expires':time.time()+120}
         self.room = None
 
     async def create(self, request):
@@ -41,6 +55,9 @@ class Rooms:
 
     async def action(self, rid, token, action, body):
         if not self.active or self.room['id']!=rid:
+            closed = self.last_closed
+            if closed and time.time()<closed['expires'] and closed['id']==rid and any(secrets.compare_digest(token,t) for t in closed['tokens']):
+                raise ValueError(closed['reason'])
             raise ValueError('Forbindelsen er afsluttet. Opret en ny kode.')
         r = self.room
         if action=='room_join':
@@ -57,7 +74,8 @@ class Rooms:
             raise PermissionError('Ugyldig forbindelse.')
         p = r['people'][role]
         if action=='room_close':
-            self.close()
+            reason = body.get('reason')
+            self.close(reason if reason in ('left','connection_failed') else 'left')
             return {'ok':True}
         if action!='room_poll':
             raise ValueError('Ukendt handling.')

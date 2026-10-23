@@ -76,8 +76,8 @@ class Drop:
                 if self.connection is pc:
                     self.connection = None
 
-    async def close_transfers(self):
-        self.rooms.close()
+    async def close_transfers(self, reason='left'):
+        self.rooms.close(reason)
         if self.connection:
             await self.connection.close()
             self.connection = None

@@ -18,6 +18,7 @@ with sync_playwright() as p:
         page.on('pageerror',lambda e:errors.append(str(e)))
         page.on('request',lambda r:posts.append(len(r.post_data_buffer or b'')) if r.method=='POST' else None)
     host.goto(config['local'])
+    assert host.locator('header a[href="/library"]').count()==0
     host.screenshot(path=str(out/'room-start-desktop.png'),full_page=True)
     host.locator('#room-create').click()
     host.locator('#room-login input[name=password]').fill('browser-test-password-123')
@@ -28,6 +29,9 @@ with sync_playwright() as p:
     guest.goto(config['public']+'/connect#'+code)
     guest.locator('#room-files').wait_for(timeout=60000)
     host.locator('#room-files').wait_for(timeout=60000)
+    for page in (host,guest):
+        assert page.locator('.room-hero').is_hidden()
+        assert page.locator('#room-vpn').is_hidden()
     if '--vpn' in sys.argv:
         for page in (host,guest):
             assert page.evaluate("async()=>{const stats=await roomPeer.pc.getStats();let relay=false;stats.forEach(s=>{if(s.type==='candidate-pair'&&s.state==='succeeded'&&s.nominated)relay=stats.get(s.localCandidateId)?.candidateType==='relay'&&stats.get(s.remoteCandidateId)?.candidateType==='relay';});return relay;}")

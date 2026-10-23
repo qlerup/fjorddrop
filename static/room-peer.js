@@ -19,7 +19,9 @@ class RoomPeer {
     if(type==='offer')this.channel(this.pc.createDataChannel('fjorddrop-room-v1',{ordered:true}));
     await this.pc.setLocalDescription(type==='offer'?await this.pc.createOffer():await this.pc.createAnswer());
     if(this.pc.iceGatheringState!=='complete')await new Promise((resolve,reject)=>{const timer=setTimeout(()=>{this.pc.removeEventListener('icegatheringstatechange',check);reject(new Error('Forbindelsen kunne ikke finde en netværksrute.'));},20000);const check=()=>{if(this.pc.iceGatheringState==='complete'){clearTimeout(timer);this.pc.removeEventListener('icegatheringstatechange',check);resolve();}};this.pc.addEventListener('icegatheringstatechange',check);check();});
-    return {type:this.pc.localDescription.type,sdp:this.pc.localDescription.sdp};
+    const sdp=this.pc.localDescription.sdp;
+    if(this.pc.getConfiguration().iceTransportPolicy==='relay'&&!/ typ relay(?: |\r?$)/m.test(sdp))throw new Error('Din browser kunne ikke nå VPN/TURN-relæet. Den anden kan være tilsluttet, men filforbindelsen er ikke klar. Kontrollér netværkets adgang til relæet.');
+    return {type:this.pc.localDescription.type,sdp};
   }
   send(message){if(this.dc?.readyState!=='open')throw new Error('Forbindelsen er ikke klar.');this.dc.send(JSON.stringify(message));}
   catalogue(){if(this.dc?.readyState==='open')this.send({op:'files',files:[...this.files].map(([id,f])=>({id,name:f.name,size:f.size}))});}
