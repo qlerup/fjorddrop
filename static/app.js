@@ -27,6 +27,10 @@ async function loadFiles(){
 }
 async function loadStatus(){
   status=await api('/api/status');csrf=status.csrf;
+  const turn=status.builtin_turn;
+  $('builtin-turn-status').textContent=turn?.configured
+    ? `${status.external_turn?'Ekstern TURN er valgt. Indbygget server: ':'Automatisk konfigureret: '}${turn.host}:${turn.port}. Åbn TCP + UDP ${turn.port} og UDP ${turn.min_port}–${turn.max_port}.${turn.public?' Offentlig tilgængelighed kræver korrekt firewall/portåbning.':' Kun lokal IP fundet; angiv offentlig IPv4 ved installationen for internetadgang.'}`
+    : 'Indbygget TURN er ikke tilgængelig i denne installation. Opdatér via FjordHub for at installere Coturn.';
   $('connection-state').textContent=status.settings.relay_url?'Mødested: '+status.relay_status:'Din private filstation';
   $('shares').replaceChildren();
   if(!status.shares.length){$('shares').append(element('div','Ingen delingslinks endnu. Opret et link fra den mappe, du vil dele.','empty'));return;}

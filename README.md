@@ -14,6 +14,7 @@
 - 16 KiB bidder med indeks og SHA-256-kontrol; begrænsede vinduer og hukommelsesforbrug. Den komplette fil udgives først efter størrelseskontrol. WebRTC bruger DTLS/SCTP til kryptering og pålidelig transport.
 - FjordHub-administratorlogin og SSO, CSRF-beskyttelse, udløb og tilbagekaldelse af links. Aktive forbindelser lukkes ved tilbagekaldelse.
 - Dansk, responsiv brugerflade og komplet logo-/ikonpakke, inklusive PNG, SVG, ICO, PWA og socialkort.
+- **Coturn installeres automatisk** som `fjorddrop-turn` sammen med appen. Hemmelig nøgle og tidsbegrænsede TURN-login oprettes automatisk; du skal ikke finde en ekstern TURN-tjeneste eller indtaste brugernavn/adgangskode.
 
 Dette er en **peer-to-peer-filoverførsel mellem to endepunkter**, inspireret af torrents' bidder. Appen bruger ikke BitTorrent-trackere, magnetlinks eller multisource-swarming.
 
@@ -42,7 +43,7 @@ Der er to måder:
 1. Installer FjordDrop på en server med en offentlig HTTPS-adresse. Reverse proxy/tunnel skal understøtte WebSocket. Angiv adressen under **Forbindelse & mapper** og gem.
 2. Vælg **Opret parringsnøgle** på den offentlige instans.
 3. På den lokale HTTP-instans indtastes HTTPS-adressen, parrings-ID og parringsnøgle. Gem og vent på **Mødested: Online**.
-4. Konfigurér STUN/TURN på filafsenderen, hvis der deles på tværs af netværk.
+4. Sørg for, at filafsenderens indbyggede TURN-server kan nås: videresend TCP+UDP 3478 og UDP 49160–49200 i router/firewall (eller de porte, du valgte ved installation).
 5. Opret et delingslink i den lokale app. Linket peger automatisk på det offentlige mødested.
 
 Den lokale instans forbinder udad med WSS og genopretter forbindelsen ved udfald. Den offentlige instans formidler filoversigt, rettighedskontrol og WebRTC-signaler. Selve filindholdet går mellem WebRTC-endepunkterne, eventuelt via et krypteret TURN-relæ. Mødestedet er **betroet infrastruktur**: det modtager delingsnøglen og metadata og serverer browserkoden. Brug et mødested, du stoler på.
@@ -57,11 +58,19 @@ Vælg **Hent fra delingslink** og indsæt det komplette link inklusive `#adgangs
 
 ## STUN, TURN og kryptering
 
-STUN hjælper med at finde direkte netværksruter. **TURN er nødvendigt, når NAT eller firewall forhindrer direkte kommunikation.** En HTTPS-tunnel til webappen erstatter ikke TURN. Indtast en eksisterende TURN-server og dens legitimationsoplysninger i appen. TURN skal være tilgængelig fra begge endepunkter og have korrekt ekstern adresse, relay-portområde og firewallregler. På netværk, der blokerer UDP, kan TURN over TCP/TLS bruges, hvis serveren tilbyder det, f.eks. `turns:turn.example.com:5349?transport=tcp`.
+STUN hjælper med at finde direkte netværksruter. **TURN er nødvendigt, når NAT eller firewall forhindrer direkte kommunikation.** Begge funktioner følger nu med installationen. Compose bygger og starter Coturn, venter på en STUN-healthcheck og starter derefter appen. Det gælder både nye installationer og opdatering af eksisterende installationer gennem FjordHub.
+
+Installationsguiden spørger kun om offentlig IPv4 og porte. Tom IPv4 opdages via HTTPS ved opstart; uden svar bruges lokal IP, og appen fortæller, at internetopsætningen mangler. Du kan angive `TURN_PUBLIC_IP` eksplicit. IP-adressen kontrolleres igen ved genstart; ved skiftende offentlig IP skal TURN-containeren genstartes. Ændring af værdier i `.env` kræver `docker compose up -d --force-recreate`.
+
+Bag en router skal **TCP og UDP 3478** samt **UDP 49160–49200** videresendes uændret til Docker-værten. Samme porte skal være tilladt i værtsfirewallen. `TURN_PORT`, `TURN_MIN_PORT` og `TURN_MAX_PORT` kan tilpasses ved installation. En HTTPS-tunnel til webappen erstatter ikke disse portåbninger. CGNAT kan forhindre indgående trafik, selv når serveren har fundet en offentlig IP; brug da en offentlig TURN-instans. Ingen automatisk portåbning eller routerændring udføres af appen.
+
+Coturn bruger UDP og TCP til klientforbindelser og UDP til relætrafik. Filindholdet er stadig krypteret af WebRTC/DTLS. Den medfølgende server har ikke TURN-over-TLS-certifikat; hvis et netværk kun tillader TLS-trafik, kan en ekstern TLS-TURN-server vælges under **Avanceret** (f.eks. `turns:turn.example.com:5349?transport=tcp`). Eksisterende eksterne TURN-indstillinger bevares ved opdatering. Tøm TURN-adressen for at bruge den indbyggede server igen.
+
+Den fælles hemmelige nøgle oprettes én gang i Compose-volumen `turn-state` og monteres kun til læsning i appen. Browseren modtager et HMAC-baseret login, der udløber efter seks timer, aldrig serverens hemmelige nøgle. Coturn kræver autentifikation, har kvoter og blokerer relæadgang til loopback, private netværk, link-local og multicast. Opstartsprocessen klargør filrettigheder og sænker derefter privilegier til valgt PUID/PGID. Ved flere netkort kan `TURN_RELAY_IP` sættes eksplicit i `.env`.
 
 Ingen universel forbindelse kan garanteres på netværk, der også blokerer TURN. Appen viser forbindelsesfejl og, hvor browserens statistik tillader det, **Direkte** eller **via TURN-relæ**. Filtrafikken er DTLS-krypteret i begge tilfælde. Browserens detektion af ruten kan variere. HTTPS beskytter signalering; lokal HTTP bør kun bruges på et betroet lokalnet. Filer på destinationens disk er almindelige filer, ikke krypteret af FjordDrop.
 
-TURN-legitimationsoplysninger deles med autoriserede modtagere, så deres browser kan forbinde. Brug en separat TURN-konto med passende quota og begrænsninger. Delingsnøgler har 256 bits tilfældighed og lagres som hash; selve linket vises kun ved oprettelse. Browseren opbevarer nøglen for delingsfanen i sessionStorage, så genindlæsning virker. Undgå at dele linket offentligt.
+Midlertidige TURN-legitimationsoplysninger deles med autoriserede modtagere, så deres browser kan forbinde. Ved en ekstern TURN-server bruges dens konfigurerede konto. Delingsnøgler har 256 bits tilfældighed og lagres som hash; selve linket vises kun ved oprettelse. Browseren opbevarer nøglen for delingsfanen i sessionStorage, så genindlæsning virker. Undgå at dele linket offentligt.
 
 ## Pc-downloads og store filer
 
@@ -87,6 +96,8 @@ docker compose logs --tail=100 app
 ### Opdatering og backup
 
 Opdatér gennem FjordHub eller med `git pull --ff-only && docker compose up -d --build`. Opdatering afbryder aktive forbindelser; eksisterende komplette filer bevares. Tag backup af `/data`, `/received` og `.env` samt selve biblioteket efter behov. Stop appen ved filkopiering af SQLite-databasen. Bevar indstillinger og parringsnøgler ved gendannelse. En tidligere commit kan bygges igen sammen med en kompatibel databasebackup.
+
+Bevar også `turn-state`-volumen, som indeholder TURN-nøglen. Normalt `docker compose down` bevarer den; `down --volumes` sletter den og er ikke en almindelig opdateringskommando. En ny nøgle kan genereres ved frisk installation, men gamle TURN-login ophører da med at virke. Det kræver ikke ændring af delingslinks.
 
 Efter et hårdt process-/strømsvigt kan skjulte `.partial*`-filer ligge i modtagelsesmapperne. De udgives ikke i filoversigten. Stop appen og gennemgå disse mapper før manuel oprydning. Normale afbrydelser og annullering rydder midlertidige filer op.
 

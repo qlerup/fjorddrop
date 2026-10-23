@@ -16,6 +16,7 @@ from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration, R
 from storage import Store, confined, listing, digest
 from transfer import Transfer
 from remote import routes as remote_routes
+import builtin_turn
 
 BASE = Path(__file__).parent
 
@@ -68,6 +69,8 @@ class Drop:
 
     def ice(self):
         s = self.settings()
+        if not s['turn_url']:
+            return builtin_turn.ice_servers() or ([{'urls': s['stun_url']}] if s['stun_url'] else [])
         ice = []
         if s['stun_url']:
             ice.append({'urls': s['stun_url']})
@@ -154,7 +157,8 @@ class Drop:
             'settings': {k: v for k, v in s.items() if k not in ('relay_key', 'turn_password')},
             'relay_key_set': bool(s['relay_key']), 'turn_password_set': bool(s['turn_password']),
             'relay_status': self.relay_status, 'peers': len(self.peers), 'max_upload': self.max_bytes,
-            'destinations': {'shared': '/shared', 'received': '/received'}})
+            'destinations': {'shared': '/shared', 'received': '/received'},
+            'builtin_turn': builtin_turn.public_status(), 'external_turn': bool(s['turn_url'])})
 
     async def logout(self, request):
         await self.admin(request)

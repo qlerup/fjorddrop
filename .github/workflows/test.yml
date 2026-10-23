@@ -24,6 +24,17 @@ jobs:
           done
           python tests/browser_check.py
       - run: docker build -t fjorddrop:test .
+      - name: Automatic Coturn installation and authenticated relay
+        run: |
+          sudo ip addr add 203.0.113.1/32 dev lo
+          mkdir -p /tmp/turn-app-data /tmp/turn-shared /tmp/turn-received
+          chmod 777 /tmp/turn-app-data /tmp/turn-received
+          export DATA_DIR=/tmp/turn-app-data SHARED_DIR=/tmp/turn-shared RECEIVED_DIR=/tmp/turn-received
+          export TURN_PUBLIC_IP=203.0.113.1 TURN_RELAY_IP=203.0.113.1
+          docker compose up -d --build --wait --wait-timeout 90
+          trap 'docker compose down' EXIT
+          python tests/turn_integration.py
+          docker compose down
       - name: Non-root container smoke test
         run: |
           mkdir -p /tmp/drop-data /tmp/drop-shared /tmp/drop-received
