@@ -17,6 +17,8 @@ from storage import Store, confined, listing, digest
 from transfer import Transfer
 from remote import routes as remote_routes
 import builtin_turn
+from vpn import VPN, force_relay
+from rooms import Rooms, routes as room_routes
 
 BASE = Path(__file__).parent
 
@@ -29,7 +31,9 @@ async def errors(request, handler):
         response = await handler(request)
     except PermissionError as exc:
         response = web.json_response({'error': str(exc)}, status=403)
-    except (ValueError, KeyError, TypeError):
+    except ValueError as exc:
+        response = web.json_response({'error': str(exc) or 'Ugyldig forespørgsel.'}, status=400)
+    except (KeyError, TypeError):
         response = web.json_response({'error': 'Ugyldig forespørgsel. Kontrollér felterne og prøv igen.'}, status=400)
     except web.HTTPException as exc:
         response = web.Response(status=exc.status, text=exc.text, headers=exc.headers)
@@ -56,6 +60,55 @@ class Drop:
         self.hub_key = os.getenv('FJORDHUB_API_KEY', '')
         self.max_bytes = int(os.getenv('MAX_UPLOAD_GB', '100'))*1024**3
         self.http = None
+        self.connection = None
+        self.vpn = VPN(self, data)
+        self.rooms = Rooms(self)
+
+    def claim_connection(self, pc):
+        if self.rooms.active or (self.connection is not None and self.connection.connectionState != 'closed'):
+            raise ValueError('En anden forbindelse er allerede aktiv. Afbryd den først.')
+        self.connection = pc
+        @pc.on('connectionstatechange')
+        async def release():
+            if pc.connectionState in ('failed', 'closed'):
+                if pc.connectionState != 'closed':
+                    await pc.close()
+                if self.connection is pc:
+                    self.connection = None
+
+    async def close_transfers(self):
+        self.rooms.close()
+        if self.connection:
+            await self.connection.close()
+            self.connection = None
+        remote = getattr(self, 'remote', None)
+        if remote:
+            tasks = [j['task'] for j in remote.jobs.values() if j['state']=='running']
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def vpn_status(self, request):
+        await self.admin(request)
+        try:
+            profiles = await asyncio.to_thread(self.vpn.discover)
+            self.vpn.status['profiles'] = profiles
+        except Exception:
+            self.vpn.status['profiles'] = []
+            if not self.vpn.profile:
+                self.vpn.status['message'] = 'FjordVPN blev ikke fundet. Installér den i samme FjordHub, og kontrollér Docker-adgang.'
+        return web.json_response(dict(self.vpn.status, profile_id=self.vpn.profile))
+
+    async def vpn_select(self, request):
+        await self.admin(request)
+        body = await request.json()
+        await self.vpn.select(body.get('profile_id', ''))
+        return web.json_response(dict(self.vpn.status, profile_id=self.vpn.profile))
+
+    async def disconnect(self, request):
+        await self.admin(request)
+        await self.close_transfers()
+        return web.json_response({'ok': True})
 
     def task(self, coro):
         task = asyncio.create_task(coro)
@@ -67,7 +120,9 @@ class Drop:
         return {k: self.store.get(k, os.getenv(k.upper(), '')) for k in
                 ('public_url', 'relay_url', 'relay_id', 'relay_key', 'stun_url', 'turn_url', 'turn_username', 'turn_password')}
 
-    def ice(self):
+    def ice(self, local=False):
+        if self.vpn.profile:
+            return self.vpn.ice(local)
         s = self.settings()
         if not s['turn_url']:
             return builtin_turn.ice_servers() or ([{'urls': s['stun_url']}] if s['stun_url'] else [])
@@ -158,7 +213,9 @@ class Drop:
             'relay_key_set': bool(s['relay_key']), 'turn_password_set': bool(s['turn_password']),
             'relay_status': self.relay_status, 'peers': len(self.peers), 'max_upload': self.max_bytes,
             'destinations': {'shared': '/shared', 'received': '/received'},
-            'builtin_turn': builtin_turn.public_status(), 'external_turn': bool(s['turn_url'])})
+            'builtin_turn': builtin_turn.public_status(), 'external_turn': bool(s['turn_url']),
+            'vpn': dict(self.vpn.status, profile_id=self.vpn.profile),
+            'connected': self.connection is not None})
 
     async def logout(self, request):
         await self.admin(request)
@@ -258,15 +315,22 @@ class Drop:
         return ws
 
     async def dispatch(self, sid, token, action, body):
+        if action.startswith('room_'):
+            return await self.rooms.action(sid, token, action, body)
         share = self.store.share(sid, token)
         root = confined(self.roots[share['root']], share['path'], directory=True)
         if action == 'browse':
             return {'name': share['name'], 'upload': bool(share['upload']), 'expires': share['expires'],
                     'ice': self.ice(), 'max_upload': self.max_bytes,
                     'files': await asyncio.to_thread(listing, root, body.get('path', ''))}
-        if action != 'offer' or len(self.peers) >= 16:
-            raise ValueError('Der er for mange forbindelser. Prøv igen senere.')
-        pc = RTCPeerConnection(RTCConfiguration(iceServers=[RTCIceServer(**i) for i in self.ice()]))
+        if action != 'offer':
+            raise ValueError('Ukendt handling.')
+        pc = RTCPeerConnection(RTCConfiguration(iceServers=[RTCIceServer(**i) for i in self.ice(local=True)]))
+        try:
+            self.claim_connection(pc)
+        except Exception:
+            await pc.close()
+            raise
         self.peers[pc] = sid
 
         @pc.on('connectionstatechange')
@@ -304,6 +368,8 @@ class Drop:
         self.task(timeout())
         try:
             await pc.setRemoteDescription(RTCSessionDescription(sdp=body['sdp'], type='offer'))
+            if self.vpn.profile:
+                force_relay(pc)
             await pc.setLocalDescription(await pc.createAnswer())
             return {'sdp': pc.localDescription.sdp, 'type': pc.localDescription.type}
         except Exception:
@@ -315,7 +381,7 @@ class Drop:
         node, sid, action = (request.match_info[k] for k in ('node', 'sid', 'action'))
         token = request.headers.get('Authorization', '').removeprefix('Bearer ')
         body = await request.json()
-        if action not in ('browse', 'offer') or len(token) > 128:
+        if action not in ('browse', 'offer', 'room_join', 'room_poll', 'room_close') or len(token) > 128:
             raise ValueError()
         if node == 'local':
             return web.json_response(await self.dispatch(sid, token, action, body))
@@ -359,8 +425,8 @@ class Drop:
                         try:
                             body = await self.dispatch(data['sid'], data['token'], data['action'], data['body'])
                             result = {'id': data['id'], 'status': 200, 'body': body}
-                        except (PermissionError, ValueError, KeyError, TypeError):
-                            result = {'id': data.get('id'), 'status': 403, 'body': {'error': 'Delingen er utilgængelig eller forespørgslen ugyldig.'}}
+                        except (PermissionError, ValueError, KeyError, TypeError) as exc:
+                            result = {'id': data.get('id'), 'status': 403, 'body': {'error': str(exc) if isinstance(exc,(PermissionError,ValueError)) and str(exc) else 'Delingen er utilgængelig eller forespørgslen ugyldig.'}}
                         except Exception:
                             result = {'id': data.get('id'), 'status': 503, 'body': {'error': 'Forbindelsen kunne ikke oprettes.'}}
                         if not ws.closed:
@@ -391,11 +457,18 @@ def create_app(data=None, shared=None, received=None):
     async def lifecycle(app):
         drop.http = ClientSession(timeout=ClientTimeout(total=40))
         connector = asyncio.create_task(drop.connector())
+        vpn_worker = asyncio.create_task(drop.vpn.run())
         yield
         connector.cancel()
+        vpn_worker.cancel()
         for task in list(drop.tasks):
             task.cancel()
-        await asyncio.gather(connector, *drop.tasks, return_exceptions=True)
+        await asyncio.gather(connector, vpn_worker, *drop.tasks, return_exceptions=True)
+        await drop.close_transfers()
+        try:
+            await drop.vpn.stop()
+        except Exception:
+            pass
         await asyncio.gather(*(pc.close() for pc in list(drop.peers)), return_exceptions=True)
         for ws in list(drop.relays.values()):
             await ws.close()
@@ -404,19 +477,24 @@ def create_app(data=None, shared=None, received=None):
     app.cleanup_ctx.append(lifecycle)
     async def index(request):
         return web.FileResponse(BASE/'static/index.html')
+    async def home(request):
+        return web.FileResponse(BASE/'static/room.html')
     async def health(request):
         return web.json_response({'ok': True, 'app': 'fjorddrop'})
     app.add_routes([
-        web.get('/', index), web.get('/s/{node}/{sid}', index), web.get('/healthz', health),
+        web.get('/', home), web.get('/connect', home), web.get('/library', index), web.get('/s/{node}/{sid}', index), web.get('/healthz', health),
         web.post('/api/login', drop.login), web.post('/api/logout', drop.logout),
         web.get('/sso', drop.sso), web.get('/auth/sso', drop.sso), web.get('/hub-login', drop.sso),
         web.get('/api/status', drop.status), web.get('/api/files', drop.files),
+        web.get('/api/vpn', drop.vpn_status), web.post('/api/vpn', drop.vpn_select),
+        web.post('/api/disconnect', drop.disconnect),
         web.post('/api/shares', drop.create_share), web.delete('/api/shares/{sid}', drop.revoke),
         web.post('/api/settings', drop.save_settings), web.post('/api/relay-key', drop.relay_key),
         web.delete('/api/relay-key/{rid}', drop.relay_revoke), web.get('/api/relay/{rid}', drop.relay_socket),
         web.post('/api/guest/{node}/{sid}/{action}', drop.guest),
         web.static('/static', BASE/'static')])
     remote_routes(app, drop)
+    room_routes(app, drop)
     return app
 
 

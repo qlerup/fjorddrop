@@ -1,5 +1,9 @@
 """Local HTTPS rendezvous + local HTTP file peer, for end-to-end browser checks."""
 import asyncio
+import base64
+import hashlib
+import hmac
+import time
 from datetime import datetime, timedelta, timezone
 import ipaddress
 import json
@@ -33,6 +37,13 @@ async def main():
         local['drop'].roots['shared'].joinpath('Photos').mkdir()
         local['drop'].roots['shared'].joinpath('Photos','Summer.bin').write_bytes(bytes(range(256))*8193)
         local['drop'].roots['shared'].joinpath('Readme.txt').write_text('Hello from the local HTTP peer!')
+        public['drop'].roots['shared'].joinpath('Readme.txt').write_text('A separate HTTPS sender')
+        remote_sid,remote_token=public['drop'].store.create('Remote HTTPS files','shared','',False,24)
+        if os.getenv('VPN_TEST_CONFIG'):
+            config=json.loads(Path(os.environ['VPN_TEST_CONFIG']).read_text())
+            username=str(int(time.time())+21600)+':browser-test'
+            password=base64.b64encode(hmac.new(config['secret'].encode(),username.encode(),hashlib.sha1).digest()).decode()
+            for k,v in {'turn_url':f"turn:{config['host']}:{config['port']}?transport=tcp",'turn_username':username,'turn_password':password}.items():local['drop'].store.set(k,v)
         rid,secret=public['drop'].store.relay_key()
         for k,v in {'relay_url':'https://localhost:18103','relay_id':rid,'relay_key':secret}.items():local['drop'].store.set(k,v)
         sid,token=local['drop'].store.create('Sommerhuset 2026','shared','',True,24)
@@ -47,7 +58,7 @@ async def main():
             if local['drop'].relay_status=='Online':break
             await asyncio.sleep(.1)
         Path('test-results').mkdir(exist_ok=True)
-        Path('test-results/browser-config.json').write_text(json.dumps({'local':'http://127.0.0.1:18102','public':'https://localhost:18103','link':f'https://localhost:18103/s/{rid}/{sid}#{token}','root':str(root),'relay':local['drop'].relay_status}))
+        Path('test-results/browser-config.json').write_text(json.dumps({'local':'http://127.0.0.1:18102','public':'https://localhost:18103','link':f'https://localhost:18103/s/{rid}/{sid}#{token}','remote_link':f'https://localhost:18103/s/local/{remote_sid}#{remote_token}','root':str(root),'relay':local['drop'].relay_status}))
         print('READY',local['drop'].relay_status,flush=True)
         try:await asyncio.Event().wait()
         finally:await localrunner.cleanup();await pubrunner.cleanup()

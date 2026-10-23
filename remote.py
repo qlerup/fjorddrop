@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 from aiohttp import ClientTimeout, web
 from aiortc import RTCPeerConnection, RTCConfiguration, RTCIceServer, RTCSessionDescription
 from transfer import unpack
+from vpn import force_relay
 
 
 def parse_link(link):
@@ -51,8 +52,8 @@ class Remote:
 
     async def start(self, request):
         await self.drop.admin(request)
-        if sum(j['state']=='running' for j in self.jobs.values())>=2:
-            raise ValueError('Der kører allerede to serveroverførsler.')
+        if self.drop.connection is not None or self.drop.rooms.active or any(j['state']=='running' for j in self.jobs.values()):
+            raise ValueError('En forbindelse er allerede aktiv. Afbryd den først.')
         body=await request.json()
         parse_link(body['url'])
         jid=secrets.token_urlsafe(12)
@@ -80,9 +81,12 @@ class Remote:
         output=None
         try:
             info=await call(self.drop, link, 'browse', {})
-            ice=self.drop.ice() or info.get('ice',[])
+            ice=self.drop.ice(local=True) or info.get('ice',[])
             pc=RTCPeerConnection(RTCConfiguration(iceServers=[RTCIceServer(**i) for i in ice]))
+            self.drop.claim_connection(pc)
             dc=pc.createDataChannel('fjorddrop-v1',ordered=True)
+            if self.drop.vpn.profile:
+                force_relay(pc)
             opened=asyncio.Event()
             queue=asyncio.Queue(maxsize=64)
             @dc.on('open')
@@ -145,6 +149,7 @@ class Remote:
 
 def routes(app,drop):
     remote=Remote(drop)
+    drop.remote=remote
     app['remote']=remote
     app.add_routes([web.post('/api/remote/browse',remote.browse),web.post('/api/remote/offer',remote.offer),web.post('/api/remote/download',remote.start),
                     web.get('/api/jobs/{jid}',remote.status),web.delete('/api/jobs/{jid}',remote.status)])

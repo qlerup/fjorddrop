@@ -13,7 +13,7 @@ with sync_playwright() as p:
     context=browser.new_context(ignore_https_errors=True,accept_downloads=True,viewport={'width':1440,'height':1100})
     page=context.new_page();errors=[]
     page.on('pageerror',lambda error:errors.append(str(error)))
-    page.goto(config['local'])
+    page.goto(config['local']+'/library')
     page.locator('#login-form input[name=password]').fill('browser-test-password-123')
     page.locator('#login-form button').click()
     page.locator('#files').get_by_text('Photos',exact=True).wait_for()
@@ -53,7 +53,7 @@ with sync_playwright() as p:
         assert guest.evaluate('document.documentElement.scrollWidth<=innerWidth'),width
     # Admin HTTP -> remote HTTPS catalog -> direct server receipt.
     page.locator('#remote-open').click()
-    page.locator('#remote-form input[name=url]').fill(config['link'])
+    page.locator('#remote-form input[name=url]').fill(config['remote_link'])
     page.locator('#remote-form button.primary').click()
     page.locator('#library-title').filter(has_text='ekstern deling').wait_for()
     page.locator('.file-row').filter(has_text='Readme.txt').get_by_text('Gem på server',exact=True).click()

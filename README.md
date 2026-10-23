@@ -6,6 +6,9 @@
 
 ## Det kan appen
 
+- Startsiden forbinder **to personer med en forbindelseskode**. Der kan kun være én aktiv forbindelse ad gangen.
+- Begge kan trække filer ind fra pc'en. Kun navn og størrelse deles; filen bliver på pc'en og uploades ikke til serverlageret. Først når den anden vælger **Hent til pc**, læser browseren filen og sender krypterede bidder direkte til modtagerens browser, eventuelt via TURN. Hold begge faner åbne. Koden lukkes ved afbrydelse, udløber efter 24 timer og bliver ugyldig ved genstart.
+- Vælg en eksisterende **FjordVPN-forbindelse eller gateway** på startsiden. Portene oprettes og fornyes automatisk gennem Proton NAT-PMP. Filtrafikken bruger kun VPN-relæet, og forbindelsen lukkes ved VPN-fejl. Webside og signalering bruger stadig den normale webadresse.
 - Del en valgt mappe med et hemmeligt link, der udløber efter 1 time, 24 timer, 7 dage eller 30 dage.
 - Modtageren ser filoversigten uden at oprette en konto, navigerer i undermapper og henter filer til sin pc.
 - Tillad eventuelt upload tilbage til din destinationsmappe. Eksisterende filer overskrives aldrig.
@@ -32,7 +35,17 @@ NAS/NFS/SMB skal først være monteret på Docker-værten. Vælg den monterede s
 
 FjordHub udsteder appens login-nøgle ved installation. Åbn appen fra FjordHub, eller log ind med din administrator. Konti med påkrævet password-/mailændring skal først færdiggøres i Hub. Gæster bruger delingslinks og får aldrig adgang til administrationen.
 
-Appens Compose bruger **host-netværk på Linux**, fordi ICE skal kunne åbne dynamiske UDP-porte. Der er ingen Docker-socket eller privilegeret container. Docker Desktop kræver aktiveret host-networking; Linux er den understøttede installationsvej. Andre apps påvirkes ikke af installation eller opdatering.
+Appens Compose bruger **host-netværk på Linux**, fordi ICE skal kunne åbne dynamiske UDP-porte. Docker-socket monteres for FjordVPN-integrationen, ligesom i FjordSeed. Opstarten finder socketens gruppe og skifter derefter til PUID/PGID; selve appen og VPN-relæet kører uden root. Socket-adgang giver Docker-administratorrettigheder og kræver en betroet appinstallation. Der bruges ingen privilegeret container. Linux er den understøttede installationsvej.
+
+## FjordVPN uden åbne routerporte
+
+Åbn **Forbind gennem FjordVPN** på startsiden, vælg forbindelsen og tryk **Brug denne forbindelse**. FjordVPN skal være installeret på samme Docker-vært. Standardnavnet er `fjordvpn`; et andet containernavn kan sættes med `FJORDVPN_CONTAINER`. Den eksisterende profil skal være startet og understøtte Proton NAT-PMP.
+
+Appen starter sit eget lille TURN-relæ i den valgte VPN-containers netværk. Hver relæforbindelse får sin egen NAT-PMP-port, der fornyes før udløb; eksisterende gateway-, torrent- og spilporte ændres ikke. To relæforbindelser på samme VPN håndteres internt, så Proton-hairpin ikke er nødvendig. Ugyldige login afvises, og private peer-adresser blokeres. Op til 32 relæallokeringer begrænser ressourceforbruget, mens brugerfladen kun tillader én to-personers forbindelse.
+
+FjordDrop genstarter ikke VPN'en eller andre apps. Skift/fravalg af VPN afbryder den aktuelle deling og rydder kun appens eget relæ og egne firewallregler. VPN-valget bevares ved genstart. Hvis VPN, portfornyelse eller relæ fejler, afbrydes filforbindelsen frem for at falde tilbage til en direkte rute. En nåbar webadresse eller et parret HTTPS-mødested er stadig nødvendig for at udveksle koden over internettet. Netværk, der blokerer TURN over både UDP og TCP, kan stadig forhindre forbindelsen.
+
+Den indbyggede Coturn-installation bevares til brug uden FjordVPN. Dens manuelle routerporte behøver ikke åbnes, når FjordVPN-relæet er valgt.
 
 ## HTTP hos den ene, HTTPS hos den anden
 
@@ -76,7 +89,7 @@ Midlertidige TURN-legitimationsoplysninger deles med autoriserede modtagere, så
 
 Chrome/Edge med File System Access API i en sikker browserkontekst (HTTPS eller localhost) kan skrive løbende til en valgt fil uden at holde hele filen i RAM. Browseren spørger om gemmested. Andre browsere/lokal HTTP bruger en Blob med en grænse på **256 MiB pr. fil**; større filer kan hentes via et HTTPS-link i Chrome/Edge eller med **Gem på server**. Upload og serverdownload har en konfigurerbar maksimumstørrelse, standard 100 GiB pr. fil.
 
-Hold en browseroverførsel åben indtil den er færdig. Annullerede eller afbrudte overførsler skal startes forfra; automatisk genoptagelse fra en tidligere bid er ikke implementeret. Serverjobs overlever lukkede faner, men ikke en appgenstart. Der er maksimalt 16 indgående forbindelser og 2 samtidige udgående serverdownloads.
+Hold en browseroverførsel åben indtil den er færdig. Annullerede eller afbrudte overførsler skal startes forfra; automatisk genoptagelse fra en tidligere bid er ikke implementeret. Serverjobs overlever lukkede faner, men ikke en appgenstart. Der er én aktiv forbindelse: enten en to-personers browsersession eller en forbindelse til servermapper. Servermapper og de tidligere delingslinks findes under **Servermapper & indstillinger**.
 
 ## Standalone
 

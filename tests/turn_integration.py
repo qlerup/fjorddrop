@@ -6,17 +6,20 @@ import hmac
 import json
 import subprocess
 import time
+import sys
+from pathlib import Path
 
 from aioice import Connection, TransportPolicy
 
 
 async def main():
     # Read only inside the isolated CI container; never print the secret.
-    config=json.loads(subprocess.check_output(['docker','exec','fjorddrop-turn','cat','/turn-state/config.json']))
+    config=json.loads(Path(sys.argv[1]).read_text()) if len(sys.argv)>1 else json.loads(subprocess.check_output(['docker','exec','fjorddrop-turn','cat','/turn-state/config.json']))
+    endpoint=(config['host'],config['port']) if len(sys.argv)>1 else ('127.0.0.1',3478)
     username=str(int(time.time())+600)+':integration'
     password=base64.b64encode(hmac.new(config['secret'].encode(),username.encode(),hashlib.sha1).digest()).decode()
     for transport in ('udp','tcp'):
-        kwargs=dict(turn_server=('127.0.0.1',3478),turn_username=username,turn_password=password,
+        kwargs=dict(turn_server=endpoint,turn_username=username,turn_password=password,
                     turn_transport=transport,transport_policy=TransportPolicy.RELAY,use_ipv6=False)
         a,b=Connection(ice_controlling=True,**kwargs),Connection(ice_controlling=False,**kwargs)
         try:
@@ -34,7 +37,7 @@ async def main():
             await b.send(b'fjorddrop-download-through-turn')
             assert await asyncio.wait_for(a.recv(),5)==b'fjorddrop-download-through-turn'
         finally:await asyncio.gather(a.close(),b.close())
-    bad=Connection(ice_controlling=True,turn_server=('127.0.0.1',3478),turn_username=username,
+    bad=Connection(ice_controlling=True,turn_server=endpoint,turn_username=username,
                    turn_password='invalid',transport_policy=TransportPolicy.RELAY,use_ipv6=False)
     try:
         await bad.gather_candidates()
@@ -43,4 +46,5 @@ async def main():
     print('PASS: authenticated relay transfer in both directions over UDP and TCP; invalid password rejected')
 
 
+if sys.platform=='win32':asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 asyncio.run(main())
