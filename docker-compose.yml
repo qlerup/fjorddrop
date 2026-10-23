@@ -71,7 +71,7 @@ services:
       - /tmp:rw,noexec,nosuid,size=16m
     cap_drop: [ALL]
     # Only initialization needs these; the TURN daemon drops to PUID/PGID.
-    cap_add: [CHOWN, DAC_OVERRIDE, SETUID, SETGID]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID]
     security_opt: [no-new-privileges:true]
     restart: unless-stopped
     healthcheck:

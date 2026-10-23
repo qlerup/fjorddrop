@@ -64,4 +64,6 @@ jobs:
           docker stop drop-smoke
       - name: Container diagnostics on failure
         if: always()
-        run: docker logs fjorddrop-turn --tail 50 2>/dev/null || true
+        run: |
+          docker logs fjorddrop-turn --tail 50 2>&1 || true
+          docker inspect fjorddrop-turn --format '{{json .State}}' || true
