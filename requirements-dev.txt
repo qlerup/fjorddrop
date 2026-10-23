@@ -1,0 +1,6 @@
+-r requirements.txt
+pytest>=9.0,<10
+pytest-aiohttp>=1.1,<2
+pytest-asyncio>=1.4,<2
+playwright>=1.50,<2
+Pillow>=11,<13

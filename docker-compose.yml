@@ -1,0 +1,47 @@
+name: fjorddrop
+services:
+  app:
+    build: .
+    container_name: ${CONTAINER_NAME:-fjorddrop}
+    # ICE opens dynamic UDP ports. Host networking on Linux keeps candidates
+    # reachable; mapping only the HTTP port would break peer-to-peer transport.
+    network_mode: host
+    user: "${PUID:-1000}:${PGID:-1000}"
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    environment:
+      APP_PORT: ${APP_PORT:-8102}
+      BIND_ADDRESS: ${BIND_ADDRESS:-0.0.0.0}
+      DATA_DIR: /data
+      SHARED_DIR: /shared
+      RECEIVED_DIR: /received
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      FJORDHUB_URL: ${FJORDHUB_URL:-}
+      FJORDHUB_API_KEY: ${FJORDHUB_API_KEY:-}
+      STUN_URL: ${STUN_URL:-}
+      TURN_URL: ${TURN_URL:-}
+      TURN_USERNAME: ${TURN_USERNAME:-}
+      TURN_PASSWORD: ${TURN_PASSWORD:-}
+      MAX_UPLOAD_GB: ${MAX_UPLOAD_GB:-100}
+    volumes:
+      - "${DATA_DIR:?Choose appdata directory}:/data"
+      - "${SHARED_DIR:?Choose shared directory}:/shared:ro"
+      - "${RECEIVED_DIR:?Choose destination directory}:/received"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    stop_grace_period: 20s
+    healthcheck:
+      test: [CMD, python, -c, "import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:'+os.environ['APP_PORT']+'/healthz',timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "2"

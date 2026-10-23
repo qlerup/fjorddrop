@@ -1,0 +1,8 @@
+.env
+data/
+shared/
+received/
+__pycache__/
+.pytest_cache/
+test-results/
+.venv/

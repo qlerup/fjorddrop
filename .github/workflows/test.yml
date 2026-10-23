@@ -1,0 +1,43 @@
+name: Test and container build
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pytest -q
+      - run: python -m playwright install --with-deps chromium
+      - name: Real HTTPS rendezvous and HTTP peer browser test
+        run: |
+          python tests/browser_server.py > /tmp/fjorddrop-browser.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          for i in $(seq 1 40); do
+            test -f test-results/browser-config.json && break
+            sleep 1
+          done
+          python tests/browser_check.py
+      - run: docker build -t fjorddrop:test .
+      - name: Non-root container smoke test
+        run: |
+          mkdir -p /tmp/drop-data /tmp/drop-shared /tmp/drop-received
+          chmod 777 /tmp/drop-data /tmp/drop-received
+          docker run -d --name drop-smoke --network host --read-only --tmpfs /tmp -e DATA_DIR=/data -e SHARED_DIR=/shared -e RECEIVED_DIR=/received -v /tmp/drop-data:/data -v /tmp/drop-shared:/shared:ro -v /tmp/drop-received:/received fjorddrop:test
+          for i in $(seq 1 20); do
+            curl -fsS http://127.0.0.1:8102/healthz && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8102/healthz
+          docker stop drop-smoke
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-checks
+          path: |
+            test-results/*.png
