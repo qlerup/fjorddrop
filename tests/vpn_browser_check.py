@@ -17,7 +17,7 @@ with sync_playwright() as p:
     host.locator('#room-vpn summary').click()
     host.locator('#room-vpn-profile').select_option(profile)
     host.locator('#room-vpn-save').click()
-    host.locator('#room-vpn-status').filter(has_text='gennem FjordVPN').wait_for(timeout=30000)
+    host.locator('#room-vpn-status').filter(has_text='VPN klar').wait_for(timeout=30000)
     host.locator('#room-create').click();host.locator('#room-code').wait_for()
     code=host.locator('#room-code').input_value()
     guest.goto(base+'/connect#'+code)

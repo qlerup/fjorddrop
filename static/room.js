@@ -1,6 +1,24 @@
 'use strict';
 const el=id=>document.getElementById(id);
 let roomCSRF='',roomStatus=null,session=null,roomPeer=null,pollTimer=null,pollBusy=false;
+let vpnTimer=null,vpnRevision=0;
+function vpnFeedback(state,text){
+  const banner=el('room-vpn-banner');banner.hidden=false;banner.dataset.state=state;banner.textContent=text;
+  el('room-vpn-status').dataset.state=state;el('room-vpn-status').textContent=text;
+}
+function renderVPN(v){
+  if(!v.profile_id){el('room-vpn-banner').hidden=true;el('room-vpn-status').dataset.state='off';el('room-vpn-status').textContent=v.message;return;}
+  const name=v.profiles?.find(p=>p.id===v.profile_id)?.name||'FjordVPN';
+  if(v.ready)vpnFeedback('ready',`✓ VPN klar · ${name}. Klar til at oprette en krypteret filforbindelse.`);
+  else vpnFeedback('pending',`VPN er ikke klar endnu · ${v.message}`);
+}
+function watchVPN(revision,delay=3000){
+  clearTimeout(vpnTimer);
+  vpnTimer=setTimeout(async()=>{
+    try{const result=await request('/api/status');if(revision!==vpnRevision)return;renderVPN(result.vpn);watchVPN(revision,result.vpn.ready?10000:3000);}
+    catch(e){if(revision!==vpnRevision)return;vpnFeedback('error','VPN-status kunne ikke kontrolleres. Forbindelsen er ikke bekræftet klar.');if(e.status!==401)watchVPN(revision,5000);}
+  },delay);
+}
 function message(text){el('room-notice').textContent=text;el('room-notice').hidden=!text;}
 function guarded(fn){return async e=>{try{await fn(e);}catch(error){if(error.name!=='AbortError')message(error.message);}};}
 async function request(path,body){const r=await fetch(path,{method:body?'POST':'GET',headers:{'Content-Type':'application/json','X-CSRF-Token':roomCSRF},body:body?JSON.stringify(body):undefined});const text=await r.text();let data;try{data=JSON.parse(text);}catch{data={error:text};}if(!r.ok)throw Object.assign(new Error(data.error||'Forbindelsen svarede ikke.'),{status:r.status});return data;}
@@ -69,10 +87,13 @@ el('room-drop').addEventListener('drop',guarded(e=>{const entries=[...e.dataTran
 async function account(){
   try{roomStatus=await request('/api/status');roomCSRF=roomStatus.csrf;el('room-vpn').hidden=false;await loadVPN();}catch(e){if(e.status!==401)message(e.message);}
 }
-async function loadVPN(){const v=await request('/api/vpn');const select=el('room-vpn-profile');select.replaceChildren(new Option('Uden FjordVPN · direkte / indbygget TURN',''));for(const p of v.profiles)select.add(new Option(p.name+(p.status?.healthy?' · klar':' · offline'),p.id));if(v.profile_id&&![...select.options].some(o=>o.value===v.profile_id))select.add(new Option('Valgt VPN · ikke tilgængelig',v.profile_id));select.value=v.profile_id;el('room-vpn-status').textContent=v.message;}
+async function loadVPN(){const revision=++vpnRevision;clearTimeout(vpnTimer);const v=await request('/api/vpn');if(revision!==vpnRevision)return;const select=el('room-vpn-profile');select.replaceChildren(new Option('Uden FjordVPN · direkte / indbygget TURN',''));for(const p of v.profiles)select.add(new Option(p.name+(p.status?.healthy?' · klar':' · offline'),p.id));if(v.profile_id&&![...select.options].some(o=>o.value===v.profile_id))select.add(new Option('Valgt VPN · ikke tilgængelig',v.profile_id));select.value=v.profile_id;renderVPN(v);watchVPN(revision);}
 el('room-vpn-save').onclick=guarded(async()=>{
+  const revision=++vpnRevision;clearTimeout(vpnTimer);
   const controls=[el('room-vpn-save'),el('room-create'),el('room-join').querySelector('button')];controls.forEach(b=>b.disabled=true);
-  try{const result=await request('/api/vpn',{profile_id:el('room-vpn-profile').value});end();el('room-vpn-status').textContent=result.message;message('Forbindelsesvalg gemt.');setTimeout(()=>loadVPN().catch(e=>message(e.message)),5000);}
+  vpnFeedback('pending',el('room-vpn-profile').value?'Forbinder til VPN … venter på at relæ og porte er klar.':'Slår FjordVPN fra …');message('');
+  try{const result=await request('/api/vpn',{profile_id:el('room-vpn-profile').value});end();renderVPN(result);watchVPN(revision);}
+  catch(e){vpnFeedback('error','VPN-valget kunne ikke gemmes. '+e.message);watchVPN(revision,5000);throw e;}
   finally{controls.forEach(b=>b.disabled=false);}
 });
 window.addEventListener('beforeunload',e=>{if(session){e.preventDefault();e.returnValue='';}});
