@@ -1,6 +1,7 @@
 """Two-browser rendezvous. Only signaling crosses HTTP; never file content."""
 import base64
 import json
+import logging
 import secrets
 import time
 
@@ -8,6 +9,8 @@ from aiohttp import web
 
 END_REASONS = {
     'left': 'Den anden har forladt forbindelsen. Opret en ny kode.',
+    'page_hidden': 'Den andens side blev lukket eller genindlæst. Hold begge sider åbne, og opret en ny kode.',
+    'closed': 'Den anden browser lukkede forbindelsen uden en fejlårsag. Genindlæs begge sider, og opret en ny kode.',
     'connection_failed': 'Den anden kunne ikke opretholde filforbindelsen. Kontrollér VPN/TURN og netværksadgang på begge sider.',
     'vpn': 'VPN-forbindelsen var ikke klar. Filforbindelsen blev lukket for at undgå overførsel uden VPN. Opret en ny kode, når VPN er klar.',
     'inactive': 'En af browserne holdt op med at svare. Hold begge faner åbne, og opret en ny kode.',
@@ -30,10 +33,13 @@ class Rooms:
             self.close('inactive')
         return self.room is not None
 
-    def close(self, reason='left'):
+    def close(self, reason='closed', role='server'):
         if self.room:
+            logging.getLogger('fjorddrop.rooms').warning('Room closed: reason=%s source=%s joined=%s signals=%s diagnostics=%s',
+                reason if reason in END_REASONS else 'closed', role, 'guest' in self.room['people'],
+                self.room.get('serial',0), {r:p.get('diagnostic',{}) for r,p in self.room['people'].items()})
             self.last_closed = {'id':self.room['id'], 'tokens':[p['token'] for p in self.room['people'].values()],
-                                'reason':END_REASONS.get(reason, END_REASONS['left']), 'expires':time.time()+120}
+                                'reason':END_REASONS.get(reason, END_REASONS['closed']), 'expires':time.time()+120}
         self.room = None
 
     async def create(self, request):
@@ -73,9 +79,22 @@ class Rooms:
         if role is None:
             raise PermissionError('Ugyldig forbindelse.')
         p = r['people'][role]
+        diagnostic = body.get('diagnostic', {})
+        if isinstance(diagnostic, dict):
+            clean = {}
+            for key in ('connection','ice','gathering','signaling'):
+                value = diagnostic.get(key)
+                if value in ('new','checking','connecting','connected','completed','disconnected','failed','closed','gathering','complete','stable','have-local-offer','have-remote-offer'):
+                    clean[key] = value
+            for key in ('relay_candidates','ice_error'):
+                value = diagnostic.get(key)
+                if type(value) is int and 0<=value<=1000:
+                    clean[key] = value
+            if clean:
+                p['diagnostic'] = clean
         if action=='room_close':
             reason = body.get('reason')
-            self.close(reason if reason in ('left','connection_failed') else 'left')
+            self.close(reason if reason in ('left','connection_failed','page_hidden') else 'closed',role)
             return {'ok':True}
         if action!='room_poll':
             raise ValueError('Ukendt handling.')

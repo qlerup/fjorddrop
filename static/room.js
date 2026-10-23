@@ -39,7 +39,7 @@ async function call(action,body={}){
   const data=await r.json();if(!r.ok)throw new Error(data.error||'Forbindelsen er afsluttet.');return data;
 }
 function end(reason,code='left'){
-  if(session)call('room_close',{reason:code}).catch(()=>{});
+  if(session)call('room_close',{reason:code,diagnostic:roomPeer?.diagnostic()}).catch(()=>{});
   document.body.classList.remove('room-connected');
   clearInterval(pollTimer);pollTimer=null;const pc=roomPeer;roomPeer=null;session=null;pc?.close();
   el('room-start').hidden=false;el('room-session').hidden=true;el('room-file-input').value='';showLocal(new Map());showRemote([]);if(reason)message(reason);
@@ -58,7 +58,7 @@ function start(info,role){
 async function poll(){
   if(pollBusy||!session)return;pollBusy=true;const current=session;
   try{
-    const reply=await call('room_poll',{ack:current.ack});if(session!==current)return;
+    const reply=await call('room_poll',{ack:current.ack,diagnostic:roomPeer.diagnostic()});if(session!==current)return;
     for(const item of reply.messages){if(item.id<=current.ack)continue;await roomPeer.pc.setRemoteDescription(item.signal);current.ack=item.id;if(item.signal.type==='offer'){const signal=await roomPeer.description('answer');await call('room_poll',{ack:current.ack,signal});}}
     if(reply.joined&&!current.negotiatingAt){current.negotiatingAt=Date.now();el('room-state').textContent='Den anden er med · opretter krypteret filforbindelse …';el('room-invite').hidden=true;}
     if(reply.joined&&current.role==='host'&&!current.offered){current.offered=true;const signal=await roomPeer.description('offer');await call('room_poll',{ack:current.ack,signal});}
@@ -78,7 +78,7 @@ el('room-create').onclick=guarded(async()=>{
   session={id:info.id,token:info.token,node:'local',code:info.code};el('room-code').value=info.code;start(info,'host');
 });
 el('room-login').onsubmit=guarded(async e=>{e.preventDefault();await request('/api/login',Object.fromEntries(new FormData(e.target)));e.target.elements.password.value='';await account();el('room-login').hidden=true;el('room-create').hidden=false;el('room-create').click();});
-el('room-leave').onclick=guarded(async()=>{try{await call('room_close');}finally{end('Forbindelsen er afsluttet. Filerne på din pc er bevaret.');}});
+el('room-leave').onclick=guarded(async()=>{try{await call('room_close',{reason:'left',diagnostic:roomPeer?.diagnostic()});}finally{end('Forbindelsen er afsluttet. Filerne på din pc er bevaret.');}});
 async function copy(text){if(navigator.clipboard)await navigator.clipboard.writeText(text);else{const field=el('room-code'),previous=field.value;field.value=text;field.focus();field.select();const copied=document.execCommand('copy');field.value=previous;if(!copied)throw new Error('Markér og kopiér koden manuelt.');}message('Kopieret.');}
 el('room-copy').onclick=guarded(()=>copy(session.code));el('room-copy-link').onclick=guarded(()=>{const c=decodeCode(session.code);return copy(c.base+'/connect#'+session.code);});
 el('room-file-input').onchange=guarded(e=>{roomPeer.add([...e.target.files]);e.target.value='';});
@@ -98,5 +98,5 @@ el('room-vpn-save').onclick=guarded(async()=>{
   finally{controls.forEach(b=>b.disabled=false);}
 });
 window.addEventListener('beforeunload',e=>{if(session){e.preventDefault();e.returnValue='';}});
-window.addEventListener('pagehide',()=>{if(session)fetch(`/api/guest/${session.node}/${session.id}/room_close`,{method:'POST',keepalive:true,headers:{'Content-Type':'application/json','Authorization':'Bearer '+session.token},body:'{}'}).catch(()=>{});});
+window.addEventListener('pagehide',()=>{if(session)fetch(`/api/guest/${session.node}/${session.id}/room_close`,{method:'POST',keepalive:true,headers:{'Content-Type':'application/json','Authorization':'Bearer '+session.token},body:JSON.stringify({reason:'page_hidden',diagnostic:roomPeer?.diagnostic()})}).catch(()=>{});});
 const invitation=location.hash.slice(1);if(invitation){history.replaceState(null,'',location.pathname);guarded(()=>join(invitation))();}else account();

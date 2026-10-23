@@ -5,10 +5,12 @@ class RoomPeer {
   constructor(ice, forceRelay, callbacks) {
     this.pc=new RTCPeerConnection({iceServers:ice,iceTransportPolicy:forceRelay?'relay':'all'});
     this.callbacks=callbacks;this.files=new Map();this.remote=[];this.closed=false;this.chain=Promise.resolve();this.sending=null;this.receiving=null;this.bytesSent=0;
+    this.pc.onicecandidateerror=e=>{this.iceError=e.errorCode;};
     this.pc.onconnectionstatechange=()=>{if(['failed','closed'].includes(this.pc.connectionState))this.close('Forbindelsen blev afbrudt.');};
     this.pc.ondatachannel=e=>this.channel(e.channel);
     this.watchdog=setInterval(()=>{for(const job of [this.sending,this.receiving])if(job?.touched&&Date.now()-job.touched>60000)this.close('Overførslen svarede ikke i 60 sekunder. Start filen igen.');},5000);
   }
+  diagnostic(){return {connection:this.pc.connectionState,ice:this.pc.iceConnectionState,gathering:this.pc.iceGatheringState,signaling:this.pc.signalingState,relay_candidates:(this.pc.localDescription?.sdp.match(/ typ relay/g)||[]).length,ice_error:this.iceError};}
   channel(dc){
     if(this.dc||dc.label!=='fjorddrop-room-v1'||!dc.ordered){dc.close();return;}
     this.dc=dc;dc.binaryType='arraybuffer';dc.onopen=()=>{this.callbacks.open();this.catalogue();};

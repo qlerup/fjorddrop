@@ -77,3 +77,19 @@ async def test_closed_room_explains_cause_to_participants_only(tmp_path,reason,e
     with pytest.raises(ValueError,match='Forbindelsen er afsluttet'):
         await drop.rooms.action('room','unknown','room_poll',{})
     drop.store.db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('reason,expected',[(None,'uden en fejlårsag'),('page_hidden','lukket eller genindlæst')])
+async def test_close_logs_bounded_network_diagnostics_without_credentials(tmp_path,caplog,reason,expected):
+    drop=create_app(tmp_path/'data',tmp_path/'shared',tmp_path/'received')['drop']
+    drop.rooms.room={'id':'private-room','expires':time.time()+60,'serial':1,'people':{'host':{'token':'private-token','seen':time.time(),'queue':[]}}}
+    await drop.rooms.action('private-room','private-token','room_close',{'reason':reason,'diagnostic':{
+        'connection':'connecting','ice':'checking','relay_candidates':2,'ice_error':701,
+        'token':'private-token','sdp':'private-sdp','signaling':'arbitrary-private-text'}})
+    assert 'source=host' in caplog.text and 'relay_candidates' in caplog.text
+    for secret in ('private-room','private-token','private-sdp','arbitrary-private-text'):
+        assert secret not in caplog.text
+    with pytest.raises(ValueError,match=expected):
+        await drop.rooms.action('private-room','private-token','room_poll',{})
+    drop.store.db.close()
