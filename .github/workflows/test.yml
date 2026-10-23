@@ -25,6 +25,7 @@ jobs:
           done
           python tests/browser_check.py
           python tests/room_browser_check.py
+          python tests/room_browser_check.py --slow-gathering
       - uses: actions/upload-artifact@v4
         if: always()
         with:

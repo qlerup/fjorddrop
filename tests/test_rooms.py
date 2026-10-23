@@ -6,6 +6,7 @@ from aiortc import RTCPeerConnection
 from aioice import TransportPolicy
 from types import SimpleNamespace
 from vpn import bridge_network
+from rooms import valid_signal
 
 
 @pytest.mark.asyncio
@@ -30,6 +31,11 @@ async def test_one_room_two_people_no_bytes_and_expiry(aiohttp_client,tmp_path,m
     assert response['messages'][0]['signal']==offer
     ack=response['messages'][0]['id']
     assert not (await drop.rooms.action(room['id'],join['token'],'room_poll',{'ack':ack}))['messages']
+    candidate={'candidate':'candidate:1 1 udp 1 203.0.113.1 50000 typ relay','sdpMid':'0','sdpMLineIndex':0,'usernameFragment':'test'}
+    trickle={'type':'candidates','candidates':[candidate,{'candidate':'','sdpMid':'0','sdpMLineIndex':0}]}
+    await drop.rooms.action(room['id'],room['token'],'room_poll',{'signal':trickle})
+    response=await drop.rooms.action(room['id'],join['token'],'room_poll',{'ack':ack})
+    assert response['messages'][0]['signal']==trickle
     with pytest.raises(ValueError):await drop.rooms.action(room['id'],join['token'],'room_poll',{'signal':{'type':'file','sdp':'contents'}})
     assert not list((tmp_path/'shared').iterdir()) and not list((tmp_path/'received').iterdir())
     pc=RTCPeerConnection()
@@ -77,6 +83,18 @@ async def test_closed_room_explains_cause_to_participants_only(tmp_path,reason,e
     with pytest.raises(ValueError,match='Forbindelsen er afsluttet'):
         await drop.rooms.action('room','unknown','room_poll',{})
     drop.store.db.close()
+
+
+@pytest.mark.parametrize('signal',[
+    {'type':'candidates','candidates':[]},
+    {'type':'candidates','candidates':[{'candidate':'x'*2049}]},
+    {'type':'candidates','candidates':[{'candidate':'x','sdpMLineIndex':True}]},
+    {'type':'candidates','candidates':[{'candidate':'x','sdpMid':[]}]},
+    {'type':'candidates','candidates':[{'candidate':'x','unexpected':'data'}]},
+    {'type':'candidates','candidates':[{'candidate':'x'}]*33},
+])
+def test_candidate_signals_are_bounded(signal):
+    assert not valid_signal(signal)
 
 
 @pytest.mark.asyncio

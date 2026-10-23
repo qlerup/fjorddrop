@@ -18,6 +18,29 @@ END_REASONS = {
 }
 
 
+def valid_signal(signal):
+    if not isinstance(signal, dict):
+        return False
+    if signal.get('type') in ('offer', 'answer'):
+        return isinstance(signal.get('sdp'), str) and len(signal['sdp'])<=60000
+    candidates = signal.get('candidates')
+    if signal.get('type')!='candidates' or not isinstance(candidates,list) or not 1<=len(candidates)<=32:
+        return False
+    for candidate in candidates:
+        if not isinstance(candidate,dict) or not isinstance(candidate.get('candidate'),str) or len(candidate['candidate'])>2048:
+            return False
+        for key,limit in (('sdpMid',128),('usernameFragment',256)):
+            value=candidate.get(key)
+            if value is not None and (not isinstance(value,str) or len(value)>limit):
+                return False
+        index=candidate.get('sdpMLineIndex')
+        if index is not None and (type(index) is not int or not 0<=index<=16):
+            return False
+        if set(candidate)-{'candidate','sdpMid','sdpMLineIndex','usernameFragment'}:
+            return False
+    return True
+
+
 class Rooms:
     def __init__(self, drop):
         self.drop = drop
@@ -106,7 +129,7 @@ class Rooms:
         other = r['people'].get('guest' if role=='host' else 'host')
         signal = body.get('signal')
         if signal is not None:
-            if not isinstance(signal,dict) or signal.get('type') not in ('offer','answer') or not isinstance(signal.get('sdp'),str) or len(signal['sdp'])>60000:
+            if not valid_signal(signal):
                 raise ValueError('Ugyldigt forbindelsessvar.')
             if not other or len(other['queue'])>=4:
                 raise ValueError('Modtageren er ikke klar.')

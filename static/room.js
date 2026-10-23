@@ -51,17 +51,28 @@ function start(info,role){
     local:showLocal,remote:showRemote,error:message,closed:reason=>{if(session)end(reason||'Forbindelsen er afsluttet.','connection_failed');},
     progress(direction,name,done,total){el('room-transfer').hidden=false;el('room-transfer-label').textContent=direction+': '+name;el('room-progress').value=total?done/total*100:100;el('room-transfer-detail').textContent=size(done)+' / '+size(total);}
   });
-  session.role=role;session.ack=0;session.offered=false;session.started=Date.now();
+  session.role=role;session.ack=0;session.offered=false;session.outgoing=[];session.started=Date.now();
   message('');
   pollTimer=setInterval(()=>poll().catch(e=>end(e.message,'connection_failed')),1000);poll().catch(e=>end(e.message,'connection_failed'));
 }
 async function poll(){
   if(pollBusy||!session)return;pollBusy=true;const current=session;
   try{
-    const reply=await call('room_poll',{ack:current.ack,diagnostic:roomPeer.diagnostic()});if(session!==current)return;
-    for(const item of reply.messages){if(item.id<=current.ack)continue;await roomPeer.pc.setRemoteDescription(item.signal);current.ack=item.id;if(item.signal.type==='offer'){const signal=await roomPeer.description('answer');await call('room_poll',{ack:current.ack,signal});}}
+    // Descriptions must precede their candidates on the ordered signaling queue.
+    const signal=current.outgoing.shift()||(roomPeer.candidates.length?{type:'candidates',candidates:roomPeer.candidates.splice(0,32)}:undefined);
+    const reply=await call('room_poll',{ack:current.ack,diagnostic:roomPeer.diagnostic(),signal});if(session!==current)return;
+    for(const item of reply.messages){
+      if(item.id<=current.ack)continue;
+      if(item.signal.type==='candidates'){
+        for(const candidate of item.signal.candidates){await roomPeer.pc.addIceCandidate(candidate);if(session!==current)return;}
+      }else{
+        await roomPeer.pc.setRemoteDescription(item.signal);if(session!==current)return;
+        if(item.signal.type==='offer'){const answer=await roomPeer.description('answer');if(session!==current)return;current.outgoing.push(answer);}
+      }
+      current.ack=item.id;
+    }
     if(reply.joined&&!current.negotiatingAt){current.negotiatingAt=Date.now();el('room-state').textContent='Den anden er med · opretter krypteret filforbindelse …';el('room-invite').hidden=true;}
-    if(reply.joined&&current.role==='host'&&!current.offered){current.offered=true;const signal=await roomPeer.description('offer');await call('room_poll',{ack:current.ack,signal});}
+    if(reply.joined&&current.role==='host'&&!current.offered){current.offered=true;const offer=await roomPeer.description('offer');if(session!==current)return;current.outgoing.push(offer);}
     if(current.negotiatingAt&&roomPeer.pc.connectionState!=='connected'&&Date.now()-current.negotiatingAt>60000)throw new Error('Forbindelsen kunne ikke oprettes. Kontrollér VPN/TURN, og opret en ny kode.');
   }finally{pollBusy=false;}
 }

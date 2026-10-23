@@ -6,6 +6,8 @@ class RoomPeer {
     this.pc=new RTCPeerConnection({iceServers:ice,iceTransportPolicy:forceRelay?'relay':'all'});
     this.callbacks=callbacks;this.files=new Map();this.remote=[];this.closed=false;this.chain=Promise.resolve();this.sending=null;this.receiving=null;this.bytesSent=0;
     this.pc.onicecandidateerror=e=>{this.iceError=e.errorCode;};
+    this.candidates=[];
+    this.pc.onicecandidate=e=>{if(e.candidate)this.candidates.push(e.candidate.toJSON());};
     this.pc.onconnectionstatechange=()=>{if(['failed','closed'].includes(this.pc.connectionState))this.close('Forbindelsen blev afbrudt.');};
     this.pc.ondatachannel=e=>this.channel(e.channel);
     this.watchdog=setInterval(()=>{for(const job of [this.sending,this.receiving])if(job?.touched&&Date.now()-job.touched>60000)this.close('Overførslen svarede ikke i 60 sekunder. Start filen igen.');},5000);
@@ -20,9 +22,9 @@ class RoomPeer {
   async description(type){
     if(type==='offer')this.channel(this.pc.createDataChannel('fjorddrop-room-v1',{ordered:true}));
     await this.pc.setLocalDescription(type==='offer'?await this.pc.createOffer():await this.pc.createAnswer());
-    if(this.pc.iceGatheringState!=='complete')await new Promise((resolve,reject)=>{const timer=setTimeout(()=>{this.pc.removeEventListener('icegatheringstatechange',check);reject(new Error('Forbindelsen kunne ikke finde en netværksrute.'));},20000);const check=()=>{if(this.pc.iceGatheringState==='complete'){clearTimeout(timer);this.pc.removeEventListener('icegatheringstatechange',check);resolve();}};this.pc.addEventListener('icegatheringstatechange',check);check();});
     const sdp=this.pc.localDescription.sdp;
-    if(this.pc.getConfiguration().iceTransportPolicy==='relay'&&!/ typ relay(?: |\r?$)/m.test(sdp))throw new Error('Din browser kunne ikke nå VPN/TURN-relæet. Den anden kan være tilsluttet, men filforbindelsen er ikke klar. Kontrollér netværkets adgang til relæet.');
+    // Exchange SDP immediately. ICE gathering can continue after a usable
+    // relay exists; waiting for "complete" prevented the answer being sent.
     return {type:this.pc.localDescription.type,sdp};
   }
   send(message){if(this.dc?.readyState!=='open')throw new Error('Forbindelsen er ikke klar.');this.dc.send(JSON.stringify(message));}

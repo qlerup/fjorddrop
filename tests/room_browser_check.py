@@ -13,6 +13,10 @@ with sync_playwright() as p:
     if '--vpn' in sys.argv:
         for ctx in (host_context,guest_context):
             ctx.add_init_script("const NativeRTC=window.RTCPeerConnection;window.RTCPeerConnection=class extends NativeRTC{constructor(c){super({...c,iceTransportPolicy:'relay'});}};")
+    if '--slow-gathering' in sys.argv:
+        # Reproduce a browser which already has relay candidates but does not
+        # report complete. The old code withheld its answer and timed out.
+        guest_context.add_init_script("Object.defineProperty(RTCPeerConnection.prototype,'iceGatheringState',{get(){return 'gathering';},configurable:true});")
     host=host_context.new_page();guest=guest_context.new_page();errors=[];posts=[]
     for page in (host,guest):
         page.on('pageerror',lambda e:errors.append(str(e)))
@@ -29,6 +33,8 @@ with sync_playwright() as p:
     guest.goto(config['public']+'/connect#'+code)
     guest.locator('#room-files').wait_for(timeout=60000)
     host.locator('#room-files').wait_for(timeout=60000)
+    if '--slow-gathering' in sys.argv:
+        assert guest.evaluate('roomPeer.pc.iceGatheringState')=='gathering'
     for page in (host,guest):
         assert page.locator('.room-hero').is_hidden()
         assert page.locator('#room-vpn').is_hidden()
