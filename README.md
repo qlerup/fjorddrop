@@ -8,6 +8,7 @@
 
 - Startsiden forbinder **to personer med en forbindelseskode**. Der kan kun være én aktiv forbindelse ad gangen.
 - Begge kan trække filer ind fra pc'en. Kun navn og størrelse deles; filen bliver på pc'en og uploades ikke til serverlageret. Først når den anden vælger **Hent til pc**, læser browseren filen og sender krypterede bidder direkte til modtagerens browser, eventuelt via TURN. Hold begge faner åbne. Koden lukkes ved afbrydelse, udløber efter 24 timer og bliver ugyldig ved genstart.
+- På **HTTP** gemmer modtagerens browser filen løbende på sin egen FjordDrop-server og starter automatisk download til pc'en bagefter. Serverkopier og ufærdige filer slettes ved afbrydelse. Indsæt koden i din egen app og log ind; forbindelsen bliver på din egen webadresse og bruger din valgte FjordVPN-profil.
 - Vælg en eksisterende **FjordVPN-forbindelse eller gateway** på startsiden. Portene oprettes og fornyes automatisk gennem Proton NAT-PMP. Filtrafikken bruger kun VPN-relæet, og forbindelsen lukkes ved VPN-fejl. Webside og signalering bruger stadig den normale webadresse.
 - Del en valgt mappe med et hemmeligt link, der udløber efter 1 time, 24 timer, 7 dage eller 30 dage.
 - Modtageren ser filoversigten uden at oprette en konto, navigerer i undermapper og henter filer til sin pc.
@@ -87,9 +88,9 @@ Midlertidige TURN-legitimationsoplysninger deles med autoriserede modtagere, så
 
 ## Pc-downloads og store filer
 
-Chrome/Edge med File System Access API i en sikker browserkontekst (HTTPS eller localhost) kan skrive løbende til en valgt fil uden at holde hele filen i RAM. Browseren spørger om gemmested. Andre browsere/lokal HTTP bruger en Blob med en grænse på **256 MiB pr. fil**; større filer kan hentes via et HTTPS-link i Chrome/Edge eller med **Gem på server**. Upload og serverdownload har en konfigurerbar maksimumstørrelse, standard 100 GiB pr. fil.
+På HTTPS kan Chrome/Edge med File System Access API skrive løbende til en valgt fil uden at holde hele filen i RAM. Browseren spørger om gemmested. På HTTP går **Hent til pc** automatisk gennem modtagerens egen server: validerede bidder gemmes i `/received/.fjorddrop-room-cache/<id>/`, og først efter en komplet modtagelse starter en almindelig pc-download. En serverkopi beholdes kun under den aktive forbindelse; både færdige og ufærdige filer slettes ved afbrydelse, inaktiv forbindelse eller genstart. Filer på pc'en påvirkes ikke. HTTP-modtageren skal være logget ind i sin egen app, og serveren skal have plads til filen. Standardgrænsen er 100 GiB pr. fil, styret af `MAX_UPLOAD_GB`. Andre HTTPS-browsere uden direkte filadgang bruger fortsat en Blob med en grænse på 256 MiB.
 
-Hold en browseroverførsel åben indtil den er færdig. Annullerede eller afbrudte overførsler skal startes forfra; automatisk genoptagelse fra en tidligere bid er ikke implementeret. Serverjobs overlever lukkede faner, men ikke en appgenstart. Der er én aktiv forbindelse: enten en to-personers browsersession eller en forbindelse til servermapper. Servermapper og de tidligere delingslinks findes under **Servermapper & indstillinger**.
+Hold en browseroverførsel åben indtil den er færdig. Annullerede eller afbrudte overførsler skal startes forfra; automatisk genoptagelse fra en tidligere bid er ikke implementeret. Midlertidig HTTP-modtagelse hører til den aktive browsersession. De tidligere serverjobs under `/library` kan fortsætte efter en lukket fane, men overlever ikke en appgenstart. Der er én aktiv forbindelse: enten en to-personers browsersession eller en forbindelse til servermapper. Servermapper og de tidligere delingslinks findes fortsat på `/library`.
 
 ## Standalone
 

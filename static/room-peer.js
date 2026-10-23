@@ -60,7 +60,7 @@ class RoomPeer {
       }else if(m.op==='done'){
         const j=this.receiving;if(!j||m.id!==j.id||m.size!==j.size||j.bytes!==j.size)throw new Error('Filen er ikke komplet.');
         if(j.writer)await j.writer.close();else{const url=URL.createObjectURL(new Blob(j.parts));const a=document.createElement('a');a.href=url;a.download=j.name;a.click();setTimeout(()=>URL.revokeObjectURL(url),60000);}
-        this.receiving=null;this.callbacks.progress('Gemt',j.name,j.size,j.size);this.callbacks.remote(this.remote);
+        this.receiving=null;this.callbacks.progress(j.server?'Gemt på server · download til pc startet':'Gemt',j.name,j.size,j.size);this.callbacks.remote(this.remote);
       }else if(m.op==='unavailable'){
         if(this.receiving?.writer)await this.receiving.writer.abort();this.receiving=null;this.callbacks.error('Filen er fjernet, eller afsenderen sender en anden fil. Prøv igen.');
       }else throw new Error('Ukendt filbesked.');
@@ -70,8 +70,8 @@ class RoomPeer {
     if(!j||!(data instanceof ArrayBuffer)||data.byteLength<=36||data.byteLength>16420)throw new Error('Ugyldig filbid.');
     const view=new DataView(data),payload=data.slice(36),hash=new Uint8Array(sha256.arrayBuffer(payload));
     if(view.getUint32(0)!==j.index||!hash.every((b,i)=>b===view.getUint8(i+4))||j.bytes+payload.byteLength>j.size)throw new Error('Filkontrollen fejlede. Filen gemmes ikke.');
-    if(j.writer)await j.writer.write(payload);else j.parts.push(payload);
-    j.index++;j.bytes+=payload.byteLength;j.touched=Date.now();this.callbacks.progress('Henter',j.name,j.bytes,j.size);
+    if(j.writer)await j.writer.write(payload,data);else j.parts.push(payload);
+    j.index++;j.bytes+=payload.byteLength;j.touched=Date.now();this.callbacks.progress(j.server?'Henter til server':'Henter',j.name,j.bytes,j.size);
     if(j.index%16===0&&j.bytes<j.size)this.send({op:'pull'});
   }
   async download(file){
@@ -79,7 +79,8 @@ class RoomPeer {
     // Reserve before awaiting the picker: a double click cannot start two jobs.
     const j={...file,bytes:0,index:0,parts:[],writer:null};this.receiving=j;
     try{
-      if(window.showSaveFilePicker){const handle=await showSaveFilePicker({suggestedName:file.name});j.writer=await handle.createWritable();}
+      if(location.protocol==='http:'){j.writer=await this.callbacks.serverWriter(file);j.server=true;}
+      else if(window.showSaveFilePicker){const handle=await showSaveFilePicker({suggestedName:file.name});j.writer=await handle.createWritable();}
       else if(file.size>256*1024*1024)throw new Error('Filer over 256 MB kræver Chrome/Edge via HTTPS med valg af gemmested.');
       j.touched=Date.now();this.send({op:'get',id:file.id});
     }catch(e){this.receiving=null;if(j.writer)await j.writer.abort();throw e;}

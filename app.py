@@ -26,7 +26,8 @@ BASE = Path(__file__).parent
 @web.middleware
 async def errors(request, handler):
     try:
-        if request.method == 'POST' and request.content_type != 'application/json':
+        binary_chunks=request.match_info.route.name=='received-chunks' and request.content_type=='application/octet-stream'
+        if request.method == 'POST' and request.content_type != 'application/json' and not binary_chunks:
             raise web.HTTPUnsupportedMediaType(text='Brug application/json.')
         response = await handler(request)
     except PermissionError as exc:
@@ -77,7 +78,11 @@ class Drop:
                     self.connection = None
 
     async def close_transfers(self, reason='left'):
+        proxy=self.rooms.proxy;self.rooms.proxy=None
+        if proxy:await self.rooms.proxy_close(proxy,reason)
         self.rooms.close(reason)
+        if hasattr(self,'received'):
+            await self.received.cancel_all()
         if self.connection:
             await self.connection.close()
             self.connection = None
@@ -495,6 +500,8 @@ def create_app(data=None, shared=None, received=None):
         web.static('/static', BASE/'static')])
     remote_routes(app, drop)
     room_routes(app, drop)
+    from received import routes as received_routes
+    received_routes(app, drop)
     return app
 
 

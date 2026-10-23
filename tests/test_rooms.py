@@ -37,7 +37,7 @@ async def test_one_room_two_people_no_bytes_and_expiry(aiohttp_client,tmp_path,m
     response=await drop.rooms.action(room['id'],join['token'],'room_poll',{'ack':ack})
     assert response['messages'][0]['signal']==trickle
     with pytest.raises(ValueError):await drop.rooms.action(room['id'],join['token'],'room_poll',{'signal':{'type':'file','sdp':'contents'}})
-    assert not list((tmp_path/'shared').iterdir()) and not list((tmp_path/'received').iterdir())
+    assert not list((tmp_path/'shared').iterdir()) and not any(p.is_file() for p in (tmp_path/'received').rglob('*'))
     pc=RTCPeerConnection()
     with pytest.raises(ValueError):drop.claim_connection(pc)
     await pc.close()

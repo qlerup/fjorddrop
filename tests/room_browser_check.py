@@ -20,7 +20,7 @@ with sync_playwright() as p:
     host=host_context.new_page();guest=guest_context.new_page();errors=[];posts=[]
     for page in (host,guest):
         page.on('pageerror',lambda e:errors.append(str(e)))
-        page.on('request',lambda r:posts.append(len(r.post_data_buffer or b'')) if r.method=='POST' else None)
+        page.on('request',lambda r:posts.append(len(r.post_data_buffer or b'')) if r.method=='POST' and '/api/received/' not in r.url else None)
     host.goto(config['local'])
     assert host.locator('header a[href="/library"]').count()==0
     host.screenshot(path=str(out/'room-start-desktop.png'),full_page=True)
@@ -67,7 +67,9 @@ with sync_playwright() as p:
         host.locator('.room-file').filter(has_text='Return.txt').get_by_role('button').click()
     download.value.save_as(out/'room-return.txt')
     assert (out/'room-return.txt').read_bytes()==b'Only downloaded on request.'
-    assert not list(root.glob('**/From-PC.bin')) and not list(root.glob('**/Return.txt'))
+    assert not list(root.glob('**/From-PC.bin'))
+    staged=list((root/'local-received').glob('**/Return.txt'))
+    assert len(staged)==1 and staged[0].read_bytes()==b'Only downloaded on request.'
     assert max(posts)<100000,'File bytes crossed HTTP signaling'
     host.screenshot(path=str(out/'room-connected-desktop.png'),full_page=True)
     for width in (390,320):
@@ -76,6 +78,11 @@ with sync_playwright() as p:
         guest.screenshot(path=str(out/f'room-connected-{width}.png'),full_page=True)
     guest.locator('#room-leave').click()
     host.locator('#room-start').wait_for(timeout=10000)
+    # HTTP staging is temporary and is deleted when the connection ends.
+    for _ in range(100):
+        if not staged[0].exists():break
+        host.wait_for_timeout(50)
+    assert not staged[0].exists()
     assert not errors,errors
     browser.close()
 print('PASS: two peers; HTTP/HTTPS signaling; third peer denied; drag/drop sends zero file bytes; explicit downloads verified both ways; no server copy; responsive UI')

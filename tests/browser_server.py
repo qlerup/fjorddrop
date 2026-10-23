@@ -43,7 +43,8 @@ async def main():
             config=json.loads(Path(os.environ['VPN_TEST_CONFIG']).read_text())
             username=str(int(time.time())+21600)+':browser-test'
             password=base64.b64encode(hmac.new(config['secret'].encode(),username.encode(),hashlib.sha1).digest()).decode()
-            for k,v in {'turn_url':f"turn:{config['host']}:{config['port']}?transport=tcp",'turn_username':username,'turn_password':password}.items():local['drop'].store.set(k,v)
+            for app in (local,public):
+                for k,v in {'turn_url':f"turn:{config['host']}:{config['port']}?transport=tcp",'turn_username':username,'turn_password':password}.items():app['drop'].store.set(k,v)
         rid,secret=public['drop'].store.relay_key()
         for k,v in {'relay_url':'https://localhost:18103','relay_id':rid,'relay_key':secret}.items():local['drop'].store.set(k,v)
         sid,token=local['drop'].store.create('Sommerhuset 2026','shared','',True,24)

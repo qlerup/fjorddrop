@@ -1,7 +1,7 @@
 'use strict';
 const el=id=>document.getElementById(id);
 let roomCSRF='',roomStatus=null,session=null,roomPeer=null,pollTimer=null,pollBusy=false;
-let vpnTimer=null,vpnRevision=0;
+let vpnTimer=null,vpnRevision=0,pendingJoin='';
 function vpnFeedback(state,text){
   const banner=el('room-vpn-banner');banner.hidden=false;banner.dataset.state=state;banner.textContent=text;
   el('room-vpn-status').dataset.state=state;el('room-vpn-status').textContent=text;
@@ -44,11 +44,28 @@ function end(reason,code='left'){
   clearInterval(pollTimer);pollTimer=null;const pc=roomPeer;roomPeer=null;session=null;pc?.close();
   el('room-start').hidden=false;el('room-session').hidden=true;el('room-file-input').value='';showLocal(new Map());showRemote([]);if(reason)message(reason);
 }
+async function serverWriter(file){
+  if(!roomCSRF)throw new Error('På HTTP skal du forbinde fra din egen FjordDrop og være logget ind, så filen kan gemmes midlertidigt på din server.');
+  const job=await request('/api/received',{name:file.name,size:file.size});
+  let frames=[],count=0,aborted=false;
+  async function flush(){
+    if(!frames.length)return;
+    const batch=frames;frames=[];
+    const r=await fetch(`/api/received/${job.id}/chunks`,{method:'POST',headers:{'Content-Type':'application/octet-stream','X-CSRF-Token':roomCSRF},body:new Blob(batch)});
+    if(!r.ok){let result;try{result=await r.json();}catch{}throw new Error(result?.error||'Filen kunne ikke gemmes på serveren.');}
+  }
+  return {
+    async write(payload,frame){if(aborted)throw new Error('Overførslen er afbrudt.');frames.push(frame);count+=payload.byteLength;if(frames.length===16||count===file.size)await flush();},
+    async close(){await flush();const result=await request(`/api/received/${job.id}/complete`,{});const link=document.createElement('a');link.href=result.url;link.download=file.name;document.body.append(link);link.click();link.remove();},
+    async abort(){aborted=true;frames=[];await fetch(`/api/received/${job.id}`,{method:'DELETE',headers:{'X-CSRF-Token':roomCSRF}});}
+  };
+}
 function start(info,role){
+  el('room-save-info').textContent=location.protocol==='http:'?'Download gemmer først filen midlertidigt på din FjordDrop-server og starter derefter download til pc’en. Serverkopien slettes, når forbindelsen afbrydes.':'I Chrome/Edge kan du gemme direkte på pc’en. Hold forbindelsen åben, indtil filen er hentet.';
   el('room-start').hidden=true;el('room-session').hidden=false;el('room-files').hidden=true;el('room-invite').hidden=role!=='host';el('room-transfer').hidden=true;el('room-state').textContent=role==='host'?'Venter på den anden …':'Forbinder krypteret …';
   roomPeer=new RoomPeer(info.ice,info.force_relay,{
     open(){document.body.classList.add('room-connected');el('room-state').textContent=info.force_relay?'Forbundet · krypteret gennem FjordVPN':'Forbundet · krypteret WebRTC';el('room-invite').hidden=true;el('room-files').hidden=false;},
-    local:showLocal,remote:showRemote,error:message,closed:reason=>{if(session)end(reason||'Forbindelsen er afsluttet.','connection_failed');},
+    local:showLocal,remote:showRemote,error:message,serverWriter,closed:reason=>{if(session)end(reason||'Forbindelsen er afsluttet.','connection_failed');},
     progress(direction,name,done,total){el('room-transfer').hidden=false;el('room-transfer-label').textContent=direction+': '+name;el('room-progress').value=total?done/total*100:100;el('room-transfer-detail').textContent=size(done)+' / '+size(total);}
   });
   session.role=role;session.ack=0;session.offered=false;session.outgoing=[];session.started=Date.now();
@@ -78,6 +95,9 @@ async function poll(){
 }
 async function join(code){
   if(session)throw new Error('Afbryd den nuværende forbindelse først.');const decoded=decodeCode(code);
+  if(!roomCSRF)await account();
+  if(roomCSRF){const info=await request('/api/rooms/join',{code:decoded.code});session={node:info.node,id:info.id,token:info.token};start(info,'guest');return;}
+  if(decoded.base!==location.origin&&location.protocol==='http:'){pendingJoin=decoded.code;el('room-login').hidden=false;el('room-create').hidden=true;message('Log ind på din FjordDrop, så filer kan gemmes midlertidigt på din server.');el('room-login').elements.password.focus();return;}
   if(decoded.base!==location.origin){location.assign(decoded.base+'/connect#'+decoded.code);return;}
   session={node:decoded.node,id:decoded.id,token:decoded.token};
   try{const info=await call('room_join');session.token=info.token;start(info,'guest');}catch(e){session=null;throw e;}
@@ -88,7 +108,7 @@ el('room-create').onclick=guarded(async()=>{
   try{info=await request('/api/rooms',{});}catch(e){if(e.status===401){el('room-login').hidden=false;el('room-create').hidden=true;el('room-login').elements.password.focus();return;}throw e;}
   session={id:info.id,token:info.token,node:'local',code:info.code};el('room-code').value=info.code;start(info,'host');
 });
-el('room-login').onsubmit=guarded(async e=>{e.preventDefault();await request('/api/login',Object.fromEntries(new FormData(e.target)));e.target.elements.password.value='';await account();el('room-login').hidden=true;el('room-create').hidden=false;el('room-create').click();});
+el('room-login').onsubmit=guarded(async e=>{e.preventDefault();await request('/api/login',Object.fromEntries(new FormData(e.target)));e.target.elements.password.value='';await account();el('room-login').hidden=true;el('room-create').hidden=false;if(pendingJoin){const code=pendingJoin;pendingJoin='';await join(code);}else el('room-create').click();});
 el('room-leave').onclick=guarded(async()=>{try{await call('room_close',{reason:'left',diagnostic:roomPeer?.diagnostic()});}finally{end('Forbindelsen er afsluttet. Filerne på din pc er bevaret.');}});
 async function copy(text){if(navigator.clipboard)await navigator.clipboard.writeText(text);else{const field=el('room-code'),previous=field.value;field.value=text;field.focus();field.select();const copied=document.execCommand('copy');field.value=previous;if(!copied)throw new Error('Markér og kopiér koden manuelt.');}message('Kopieret.');}
 el('room-copy').onclick=guarded(()=>copy(session.code));el('room-copy-link').onclick=guarded(()=>{const c=decodeCode(session.code);return copy(c.base+'/connect#'+session.code);});
